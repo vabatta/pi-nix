@@ -38,20 +38,34 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          if nix-update --flake pi --build --subpackage node_modules; then
-            if git diff --quiet; then
-              echo "Already at latest version"
-              echo "has-changes=false" >> "$GITHUB_OUTPUT"
+          # nix-update handles version + src hash; we handle node_modules hash
+          # manually because nix-update can't update per-platform hash maps
+          nix-update --flake pi
+
+          # Build to check if node_modules hash needs updating
+          BUILD_LOG=$(nix build .#pi -L 2>&1) && BUILD_OK=true || BUILD_OK=false
+
+          if [ "$BUILD_OK" = "false" ]; then
+            HASH=$(echo "$BUILD_LOG" | grep "got:" | awk '{print $NF}')
+            if [ -n "$HASH" ]; then
+              echo "Updating x86_64-linux node_modules hash to $HASH"
+              sed -i "s|\"x86_64-linux\" = [^;]*|\"x86_64-linux\" = \"$HASH\"|" package.nix
+              nix build .#pi -L
             else
-              NEW_VERSION=$(grep -o 'version = "[^"]*"' package.nix | head -1 | sed 's/version = "\(.*\)"/\1/')
-              echo "Updated to $NEW_VERSION"
-              echo "has-changes=true" >> "$GITHUB_OUTPUT"
-              echo "new-version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+              echo "Build failed but couldn't extract node_modules hash:"
+              echo "$BUILD_LOG"
+              exit 1
             fi
-          else
-            echo "nix-update failed"
+          fi
+
+          if git diff --quiet; then
+            echo "Already at latest version"
             echo "has-changes=false" >> "$GITHUB_OUTPUT"
-            exit 1
+          else
+            NEW_VERSION=$(grep -o 'version = "[^"]*"' package.nix | head -1 | sed 's/version = "\(.*\)"/\1/')
+            echo "Updated to $NEW_VERSION"
+            echo "has-changes=true" >> "$GITHUB_OUTPUT"
+            echo "new-version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Update VERSION file
