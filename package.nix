@@ -5,7 +5,6 @@
 , fetchFromGitHub
 , makeBinaryWrapper
 , nodejs
-, typescript-go
 , nix-update-script
 , testers
 , cacert
@@ -80,6 +79,7 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     runHook preConfigure
     cp -R ${finalAttrs.node_modules}/node_modules .
     chmod -R u+w node_modules
+    patchShebangs node_modules
     runHook postConfigure
   '';
 
