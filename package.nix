@@ -10,14 +10,6 @@
 , cacert
 }:
 
-let
-  bun-target = {
-    "aarch64-darwin" = "bun-darwin-arm64";
-    "aarch64-linux" = "bun-linux-arm64";
-    "x86_64-darwin" = "bun-darwin-x64";
-    "x86_64-linux" = "bun-linux-x64";
-  };
-in
 stdenvNoCC.mkDerivation (finalAttrs: {
   pname = "pi";
   version = "0.74.0";
@@ -114,7 +106,6 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     echo "Compiling binary..."
     bun build \
       --compile \
-      --target=${bun-target.${stdenvNoCC.hostPlatform.system}} \
       --outfile=pi \
       ./packages/coding-agent/dist/bun/cli.js
 
