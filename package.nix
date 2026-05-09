@@ -126,8 +126,11 @@ stdenvNoCC.mkDerivation (finalAttrs: {
   installPhase = ''
     runHook preInstall
     install -Dm755 pi $out/bin/pi
-    # pi reads package.json from __dirname for version info
+    # pi reads these from __dirname at runtime
     cp packages/coding-agent/package.json $out/bin/package.json
+    cp -r packages/coding-agent/dist/theme $out/bin/theme
+    cp -r packages/coding-agent/dist/assets $out/bin/assets
+    cp -r packages/coding-agent/dist/export-html $out/bin/export-html
     runHook postInstall
   '';
 
