@@ -54,7 +54,7 @@ stdenvNoCC.mkDerivation (finalAttrs: {
       "aarch64-darwin" = "sha256-9tujjOUdThAroSvJUI79DZ5teVLQmwqW7RVNiqd4yw4=";
       "x86_64-darwin" = lib.fakeHash;
       "aarch64-linux" = lib.fakeHash;
-      "x86_64-linux" = lib.fakeHash;
+      "x86_64-linux" = "sha256-4L4GlIrlfzaT9wZCIYXDjhVxXZkDvYY8GFxmmUegT2A=";
     }.${stdenv.hostPlatform.system};
     outputHashAlgo = "sha256";
     outputHashMode = "recursive";
