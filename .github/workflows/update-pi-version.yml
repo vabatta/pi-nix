@@ -1,0 +1,77 @@
+name: Track Pi Version
+
+on:
+  schedule:
+    # Every 6 hours
+    - cron: "15 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  check-update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get current tracked version
+        id: current
+        run: |
+          if [ -f VERSION ]; then
+            echo "version=$(cat VERSION)" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=0.0.0" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Get latest pi version from npm
+        id: latest
+        run: |
+          LATEST=$(npm view @earendil-works/pi-coding-agent version 2>/dev/null || echo "")
+          if [ -z "$LATEST" ]; then
+            echo "Failed to fetch latest version"
+            exit 1
+          fi
+          echo "version=$LATEST" >> "$GITHUB_OUTPUT"
+
+      - name: Check if update needed
+        id: check
+        run: |
+          if [ "${{ steps.current.outputs.version }}" = "${{ steps.latest.outputs.version }}" ]; then
+            echo "No update needed (current: ${{ steps.current.outputs.version }})"
+            echo "update=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Update available: ${{ steps.current.outputs.version }} -> ${{ steps.latest.outputs.version }}"
+            echo "update=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Update version file
+        if: steps.check.outputs.update == 'true'
+        run: echo "${{ steps.latest.outputs.version }}" > VERSION
+
+      - name: Update README badge
+        if: steps.check.outputs.update == 'true'
+        run: |
+          sed -i "s/pi-coding-agent-v[0-9]*\.[0-9]*\.[0-9]*/pi-coding-agent-v${{ steps.latest.outputs.version }}/" README.md
+
+      - name: Commit and tag
+        if: steps.check.outputs.update == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add VERSION README.md
+          git commit -m "track pi v${{ steps.latest.outputs.version }}"
+          git tag "v${{ steps.latest.outputs.version }}"
+          git push origin main --tags
+
+      - name: Create release
+        if: steps.check.outputs.update == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "v${{ steps.latest.outputs.version }}" \
+            --title "pi v${{ steps.latest.outputs.version }}" \
+            --notes "Tracks pi coding agent v${{ steps.latest.outputs.version }}
+
+          Install: \`pi-setup\` (via the home-manager module)
+          Update: \`pi-update\`"
