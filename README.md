@@ -1,34 +1,31 @@
 # pi-nix
 
-Nix home-manager module for [pi.dev](https://pi.dev) coding agent.
+Nix package and home-manager module for [pi.dev](https://pi.dev) coding agent.
 
-![pi-coding-agent-v0.74.0](https://img.shields.io/badge/pi--coding--agent-v0.74.0-blue)
+![pi--v0.74.0](https://img.shields.io/badge/pi--v0.74.0-blue)
 
-Pi is installed and updated via npm at runtime — this module manages configuration, not the binary. No `buildNpmPackage` hashing pain.
+## What this does
 
-## What the module does
+- **Packages pi as a single binary** via `bun build --compile` (no node needed at runtime)
+- **Home-manager module** for declarative configuration (settings, auth, providers, extensions)
+- **Auto-updates** via GitHub Actions checking npm every 6h
 
-- Wraps `pi` with encapsulated Node.js (not on global PATH)
-- Generates `settings.json` (seed-once or overwrite per launch)
-- Manages `auth.json` and `models.json` via `home.file`
-- Provides `pi-setup`, `pi-update`, `pi-reset-config` shell aliases
-- First-run guard with helpful install message
-- `preLaunchHook` for theme sync or custom pre-launch logic
+## Quick start
 
-## Usage
-
-### Flake input
-
-```nix
-{
-  inputs.pi-nix.url = "github:vabatta/pi-nix";
-}
+```bash
+nix run github:vabatta/pi-nix
 ```
 
-### Home-manager import
+## Flake usage
 
 ```nix
-# In your darwin or home-manager config:
+# flake.nix
+{
+  inputs.pi-nix.url = "github:vabatta/pi-nix";
+  inputs.pi-nix.inputs.nixpkgs.follows = "nixpkgs";
+}
+
+# In home-manager config:
 home-manager.users.<user>.imports = [
   inputs.pi-nix.homeManagerModules.default
 ];
@@ -39,13 +36,14 @@ home-manager.users.<user>.imports = [
 ```nix
 programs.pi = {
   enable = true;
+  package = inputs.pi-nix.packages.${system}.default;
   provider = "openrouter";
   model = "nvidia/nemotron-3-nano-30b-a3b:free";
-  theme = "dark"; # or any installed theme name
+  theme = "dark";
 
   auth.openrouter = {
     type = "api_key";
-    key = "your-api-key"; # or "!op read '...'" for 1password
+    key = "your-api-key";
   };
 
   packages = [
@@ -54,7 +52,6 @@ programs.pi = {
     "npm:pi-web-access"
   ];
 
-  # Custom providers (e.g. local ollama)
   customProviders.ollama-local = {
     name = "Ollama (local)";
     baseUrl = "http://localhost:11434/v1";
@@ -64,25 +61,16 @@ programs.pi = {
     ];
   };
 
-  mutableSettings = true; # seed once, pi config TUI edits persist
-  settings = {}; # extra settings.json keys
+  mutableSettings = true;
   preLaunchHook = ""; # shell commands before pi launches
 };
 ```
 
-### First-time setup
-
-After `darwin-rebuild switch` (or `home-manager switch`):
+## Updating
 
 ```bash
-pi-setup    # installs pi via npm
-pi          # ready to use
-```
-
-### Updating pi
-
-```bash
-pi-update   # updates to latest npm release
+nix flake update pi-nix   # in your dotfiles
+darwin-rebuild switch       # or home-manager switch
 ```
 
 ## Options
@@ -90,10 +78,11 @@ pi-update   # updates to latest npm release
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `enable` | bool | `false` | Enable pi |
-| `nodejs` | package | `pkgs.nodejs` | Node.js (encapsulated) |
+| `package` | package | (required) | The pi package |
+| `nodejs` | package | `pkgs.nodejs` | Node.js for extension management |
 | `provider` | enum/str | `"openrouter"` | Default provider |
 | `model` | str | `""` | Default model |
-| `theme` | null/str | `null` | Theme name (null = pi auto-detect) |
+| `theme` | null/str | `null` | Theme name (null = auto-detect) |
 | `auth` | attrsOf | `{}` | Auth credentials per provider |
 | `customProviders` | attrsOf | `{}` | Custom providers (models.json) |
 | `packages` | listOf str | `[]` | Extension packages |
@@ -101,9 +90,13 @@ pi-update   # updates to latest npm release
 | `settings` | attrs | `{}` | Extra settings.json keys |
 | `preLaunchHook` | lines | `""` | Pre-launch shell hook |
 
-## Auto-update
+## Architecture
 
-A GitHub Actions workflow checks npm for new pi releases every 6 hours and creates tagged releases to track versions.
+- **Binary**: Built from source via `bun build --compile` — single executable, no node runtime needed
+- **Dependencies**: FOD (fixed-output derivation) for `node_modules` — bypasses `buildNpmPackage` hash issues
+- **Extensions**: Managed by pi at runtime via npm (`pi install npm:...`)
+- **Config**: `settings.json` seeded by nix, mutable at runtime via `/settings`
+- **Auth/Models**: Immutable nix-managed symlinks
 
 ## License
 

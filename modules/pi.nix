@@ -41,7 +41,6 @@ let
   };
 
   # Assembled settings JSON
-  # theme is included via native pi settings if set, managed by /settings at runtime
   settingsBase = {
     defaultProvider = cfg.provider;
     defaultModel = cfg.model;
@@ -65,38 +64,37 @@ let
     echo '${settingsJson}' > "$settings_file"
   '';
 
-  # Wrapper pre-launch hook (user-provided shell script injected before exec)
+  # Wrapper pre-launch hook
   preLaunchScript = lib.optionalString (cfg.preLaunchHook != "") ''
     ${cfg.preLaunchHook}
   '';
 
   piWrapper = pkgs.writeShellScriptBin "pi" ''
+    # npm on PATH for extension management (pi install)
     export NPM_CONFIG_PREFIX="$HOME/.pi/npm"
     export PATH="${cfg.nodejs}/bin:$PATH"
-
-    pi_cli="$HOME/.pi/npm/lib/node_modules/@earendil-works/pi-coding-agent/dist/cli.js"
-
-    if [[ ! -f "$pi_cli" ]]; then
-      echo "Pi is not installed. Run 'pi-setup' to install." >&2
-      exit 1
-    fi
 
     settings_file="$HOME/.pi/agent/settings.json"
 
     ${settingsScript}
     ${preLaunchScript}
 
-    exec ${cfg.nodejs}/bin/node "$pi_cli" "$@"
+    exec ${cfg.package}/bin/pi "$@"
   '';
 in
 {
   options.programs.pi = {
     enable = lib.mkEnableOption "pi coding agent";
 
+    package = lib.mkOption {
+      type = lib.types.package;
+      description = "The pi package to use";
+    };
+
     nodejs = lib.mkOption {
       type = lib.types.package;
       default = pkgs.nodejs;
-      description = "Node.js package (encapsulated in wrapper, not on global PATH)";
+      description = "Node.js package for extension management (encapsulated, not on global PATH)";
     };
 
     provider = lib.mkOption {
@@ -157,10 +155,7 @@ in
   config = lib.mkIf cfg.enable {
     home.packages = [ piWrapper ];
 
-    home.shellAliases = {
-      "pi-setup" = "${npmEnv} npm install -g @earendil-works/pi-coding-agent";
-      "pi-update" = "${npmEnv} npm update -g @earendil-works/pi-coding-agent";
-    } // lib.optionalAttrs cfg.mutableSettings {
+    home.shellAliases = lib.optionalAttrs cfg.mutableSettings {
       "pi-reset-config" = "rm -f $HOME/.pi/agent/settings.json && echo 'Settings reset. Next pi launch will re-seed from nix config.'";
     };
 
