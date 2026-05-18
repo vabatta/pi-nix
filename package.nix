@@ -12,13 +12,13 @@
 
 stdenvNoCC.mkDerivation (finalAttrs: {
   pname = "pi";
-  version = "0.74.1";
+  version = "0.75.1";
 
   src = fetchFromGitHub {
     owner = "earendil-works";
     repo = "pi";
     tag = "v${finalAttrs.version}";
-    hash = "sha256-RU6xLz9uF1zTrvWtj7MNNmlavD1t/IVxiWCW90mN8QE=";
+    hash = "sha256-/mtTxi6kwf8I3KJime//QqwVuW2dY2PV66Z/xcfjAFc=";
   };
 
   node_modules = stdenvNoCC.mkDerivation {
@@ -54,7 +54,7 @@ stdenvNoCC.mkDerivation (finalAttrs: {
       "aarch64-darwin" = "sha256-9tujjOUdThAroSvJUI79DZ5teVLQmwqW7RVNiqd4yw4=";
       "x86_64-darwin" = lib.fakeHash;
       "aarch64-linux" = lib.fakeHash;
-      "x86_64-linux" = "sha256-tyxV/KYTgUavaAi9+NeLG1cfYqxVp1tgRQ8mGQQI3Uw=";
+      "x86_64-linux" = "sha256-AtlgNL+yYR5TbSQaMjTJtILRsF7fwPXJalWtFHeGS0M=";
     }.${stdenv.hostPlatform.system};
     outputHashAlgo = "sha256";
     outputHashMode = "recursive";
