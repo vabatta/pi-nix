@@ -15,18 +15,51 @@ permissions:
   contents: write
 
 jobs:
-  bump:
+  # Slim probe: no Nix install. Returns fast when there is nothing to do.
+  check:
     runs-on: ubuntu-latest
     outputs:
-      has-changes: ${{ steps.update.outputs.has-changes }}
-      version-changed: ${{ steps.update.outputs.version-changed }}
-      new-version: ${{ steps.update.outputs.new-version }}
+      should-run: ${{ steps.decide.outputs.should-run }}
+      current-version: ${{ steps.decide.outputs.current-version }}
+      latest-version: ${{ steps.decide.outputs.latest-version }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+        with:
+          sparse-checkout: package.nix
+          sparse-checkout-cone-mode: false
 
-      - name: Set up Nix
-        uses: DeterminateSystems/nix-installer-action@main
+      - name: Compare current vs upstream version
+        id: decide
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          CURRENT=$(grep -o 'version = "[^"]*"' package.nix | head -1 | sed 's/version = "\(.*\)"/\1/')
+          LATEST=$(gh api repos/earendil-works/pi/releases/latest --jq .tag_name | sed 's/^v//')
+          echo "Current: $CURRENT"
+          echo "Latest:  $LATEST"
+
+          echo "current-version=$CURRENT" >> "$GITHUB_OUTPUT"
+          echo "latest-version=$LATEST" >> "$GITHUB_OUTPUT"
+
+          if [ "$CURRENT" != "$LATEST" ] || [ "${{ inputs.force }}" = "true" ]; then
+            echo "should-run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "should-run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # Bump version + src hash once, authoritatively. Per-platform node_modules
+  # hashes are deferred to the matrix.
+  prepare:
+    needs: check
+    if: needs.check.outputs.should-run == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      version-changed: ${{ steps.bump.outputs.version-changed }}
+      new-version: ${{ steps.bump.outputs.new-version }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: DeterminateSystems/nix-installer-action@main
         with:
           extra-conf: |
             experimental-features = nix-command flakes
@@ -34,181 +67,127 @@ jobs:
       - name: Install nix-update
         run: nix profile install github:Mic92/nix-update
 
-      - name: Bump version + fix x86_64-linux hash
-        id: update
+      - name: Bump version + src hash
+        id: bump
         run: |
-          # nix-update handles version + src hash; per-platform node_modules
-          # hashes are handled manually because nix-update can't update
-          # per-platform hash maps.
+          # nix-update can't update per-platform outputHash maps, so it only
+          # touches version + src.hash here. node_modules hashes are handled
+          # by the platform-hashes matrix.
           nix-update --flake pi
-
-          BUILD_LOG=$(nix build .#pi -L 2>&1) && BUILD_OK=true || BUILD_OK=false
-
-          if [ "$BUILD_OK" = "false" ]; then
-            HASH=$(echo "$BUILD_LOG" | grep "got:" | awk '{print $NF}')
-            if [ -n "$HASH" ]; then
-              echo "Updating x86_64-linux node_modules hash to $HASH"
-              sed -i "s|\"x86_64-linux\" = [^;]*|\"x86_64-linux\" = \"$HASH\"|" package.nix
-              nix build .#pi -L
-            else
-              echo "Build failed but couldn't extract node_modules hash:"
-              echo "$BUILD_LOG"
-              exit 1
-            fi
-          fi
 
           if git diff --quiet; then
             VERSION_CHANGED=false
-            echo "Already at latest version"
+            echo "Version unchanged (force-only run)"
           else
             VERSION_CHANGED=true
-            echo "Updated package.nix"
+            echo "Version bumped"
           fi
 
           NEW_VERSION=$(grep -o 'version = "[^"]*"' package.nix | head -1 | sed 's/version = "\(.*\)"/\1/')
           echo "version-changed=$VERSION_CHANGED" >> "$GITHUB_OUTPUT"
           echo "new-version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
 
-          # Run downstream platform jobs whenever the version changed,
-          # or when manually dispatched with force=true (refreshes stale
-          # per-platform node_modules hashes without a version bump).
-          if [ "$VERSION_CHANGED" = "true" ] || [ "${{ inputs.force }}" = "true" ]; then
-            echo "has-changes=true" >> "$GITHUB_OUTPUT"
+      - name: Upload bumped package.nix
+        uses: actions/upload-artifact@v5
+        with:
+          name: bumped-package-nix
+          path: package.nix
+
+  # Fan out: each platform builds on a native runner and reports its
+  # node_modules hash. No sed here — the release job applies them all on
+  # one runner (GNU sed), avoiding the BSD-vs-GNU divergence.
+  platform-hashes:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: x86_64-linux,    runner: ubuntu-latest    }
+          - { platform: aarch64-darwin,  runner: macos-latest     }
+          - { platform: x86_64-darwin,   runner: macos-13         }
+          - { platform: aarch64-linux,   runner: ubuntu-24.04-arm }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Pull bumped package.nix (overwrites checkout copy)
+        uses: actions/download-artifact@v5
+        with:
+          name: bumped-package-nix
+
+      - uses: DeterminateSystems/nix-installer-action@main
+        with:
+          extra-conf: |
+            experimental-features = nix-command flakes
+
+      - name: Capture node_modules hash for ${{ matrix.platform }}
+        run: |
+          BUILD_LOG=$(nix build .#pi -L 2>&1) && BUILD_OK=true || BUILD_OK=false
+
+          if [ "$BUILD_OK" = "true" ]; then
+            echo "Build succeeded with existing hash; no update needed."
+            : > hash.txt
           else
-            echo "has-changes=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Upload package.nix
-        if: steps.update.outputs.has-changes == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: package-nix
-          path: package.nix
-
-  bump-aarch64-darwin:
-    needs: bump
-    if: needs.bump.outputs.has-changes == 'true'
-    # macos-latest currently maps to Apple Silicon (aarch64-darwin).
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          name: package-nix
-      - uses: DeterminateSystems/nix-installer-action@main
-        with:
-          extra-conf: |
-            experimental-features = nix-command flakes
-      - name: Fix aarch64-darwin hash
-        run: |
-          BUILD_LOG=$(nix build .#pi -L 2>&1) && BUILD_OK=true || BUILD_OK=false
-          if [ "$BUILD_OK" = "false" ]; then
             HASH=$(echo "$BUILD_LOG" | grep "got:" | awk '{print $NF}')
-            if [ -n "$HASH" ]; then
-              echo "Updating aarch64-darwin node_modules hash to $HASH"
-              # BSD sed (macOS) needs '' after -i
-              sed -i '' "s|\"aarch64-darwin\" = [^;]*|\"aarch64-darwin\" = \"$HASH\"|" package.nix
-              nix build .#pi -L
-            else
-              echo "Build failed but couldn't extract node_modules hash:"
+            if [ -z "$HASH" ]; then
+              echo "Build failed for a non-hash reason:"
               echo "$BUILD_LOG"
               exit 1
             fi
+            echo "Captured ${{ matrix.platform }} hash: $HASH"
+            echo "$HASH" > hash.txt
           fi
-      - uses: actions/upload-artifact@v4
-        with:
-          name: package-nix
-          path: package.nix
-          overwrite: true
 
-  bump-x86_64-darwin:
-    needs: bump-aarch64-darwin
-    if: needs.bump.outputs.has-changes == 'true'
-    # macos-13 is the Intel Mac runner (x86_64-darwin).
-    runs-on: macos-13
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
-          name: package-nix
-      - uses: DeterminateSystems/nix-installer-action@main
-        with:
-          extra-conf: |
-            experimental-features = nix-command flakes
-      - name: Fix x86_64-darwin hash
-        run: |
-          BUILD_LOG=$(nix build .#pi -L 2>&1) && BUILD_OK=true || BUILD_OK=false
-          if [ "$BUILD_OK" = "false" ]; then
-            HASH=$(echo "$BUILD_LOG" | grep "got:" | awk '{print $NF}')
-            if [ -n "$HASH" ]; then
-              echo "Updating x86_64-darwin node_modules hash to $HASH"
-              sed -i '' "s|\"x86_64-darwin\" = [^;]*|\"x86_64-darwin\" = \"$HASH\"|" package.nix
-              nix build .#pi -L
-            else
-              echo "Build failed but couldn't extract node_modules hash:"
-              echo "$BUILD_LOG"
-              exit 1
-            fi
-          fi
-      - uses: actions/upload-artifact@v4
-        with:
-          name: package-nix
-          path: package.nix
-          overwrite: true
+          name: hash-${{ matrix.platform }}
+          path: hash.txt
 
-  bump-aarch64-linux:
-    needs: bump-x86_64-darwin
-    if: needs.bump.outputs.has-changes == 'true'
-    # GitHub's free ARM linux runner.
-    runs-on: ubuntu-24.04-arm
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          name: package-nix
-      - uses: DeterminateSystems/nix-installer-action@main
-        with:
-          extra-conf: |
-            experimental-features = nix-command flakes
-      - name: Fix aarch64-linux hash
-        run: |
-          BUILD_LOG=$(nix build .#pi -L 2>&1) && BUILD_OK=true || BUILD_OK=false
-          if [ "$BUILD_OK" = "false" ]; then
-            HASH=$(echo "$BUILD_LOG" | grep "got:" | awk '{print $NF}')
-            if [ -n "$HASH" ]; then
-              echo "Updating aarch64-linux node_modules hash to $HASH"
-              sed -i "s|\"aarch64-linux\" = [^;]*|\"aarch64-linux\" = \"$HASH\"|" package.nix
-              nix build .#pi -L
-            else
-              echo "Build failed but couldn't extract node_modules hash:"
-              echo "$BUILD_LOG"
-              exit 1
-            fi
-          fi
-      - uses: actions/upload-artifact@v4
-        with:
-          name: package-nix
-          path: package.nix
-          overwrite: true
-
+  # Apply hashes, commit, conditionally tag + GH release.
+  # Policy:
+  #   - Version bump: strict. Any platform job failure fails the release.
+  #   - Force-only refresh: lenient. Apply whatever hashes came back.
   release:
-    needs: [bump, bump-aarch64-darwin, bump-x86_64-darwin, bump-aarch64-linux]
-    if: needs.bump.outputs.has-changes == 'true'
+    needs: [check, prepare, platform-hashes]
+    if: |
+      always() &&
+      needs.check.outputs.should-run == 'true' &&
+      needs.prepare.result == 'success' &&
+      (needs.platform-hashes.result == 'success' ||
+       (needs.platform-hashes.result == 'failure' && needs.prepare.outputs.version-changed == 'false'))
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - name: Download finalized package.nix
-        uses: actions/download-artifact@v4
+      - name: Pull bumped package.nix
+        uses: actions/download-artifact@v5
         with:
-          name: package-nix
+          name: bumped-package-nix
+
+      - name: Pull all platform hashes
+        uses: actions/download-artifact@v5
+        with:
+          pattern: hash-*
+          path: hashes
+
+      - name: Apply per-platform hashes to package.nix
+        run: |
+          for d in hashes/hash-*; do
+            platform="${d#hashes/hash-}"
+            hash=$(cat "$d/hash.txt" 2>/dev/null || true)
+            if [ -n "$hash" ]; then
+              echo "Updating $platform = $hash"
+              sed -i "s|\"$platform\" = [^;]*|\"$platform\" = \"$hash\"|" package.nix
+            else
+              echo "$platform: already current, skipping"
+            fi
+          done
 
       - name: Update VERSION + README badge (version bump only)
-        if: needs.bump.outputs.version-changed == 'true'
+        if: needs.prepare.outputs.version-changed == 'true'
         run: |
-          echo "${{ needs.bump.outputs.new-version }}" > VERSION
-          sed -i "s/pi--v[0-9]*\.[0-9]*\.[0-9]*/pi--v${{ needs.bump.outputs.new-version }}/" README.md
+          echo "${{ needs.prepare.outputs.new-version }}" > VERSION
+          sed -i "s/pi--v[0-9]*\.[0-9]*\.[0-9]*/pi--v${{ needs.prepare.outputs.new-version }}/" README.md
 
       - name: Commit and push
         id: commit
@@ -223,9 +202,9 @@ jobs:
             exit 0
           fi
 
-          if [ "${{ needs.bump.outputs.version-changed }}" = "true" ]; then
-            git commit -m "update pi to v${{ needs.bump.outputs.new-version }}"
-            git tag "v${{ needs.bump.outputs.new-version }}"
+          if [ "${{ needs.prepare.outputs.version-changed }}" = "true" ]; then
+            git commit -m "update pi to v${{ needs.prepare.outputs.new-version }}"
+            git tag "v${{ needs.prepare.outputs.new-version }}"
             git push origin main --tags
           else
             git commit -m "refresh per-platform node_modules hashes"
@@ -234,13 +213,13 @@ jobs:
           echo "committed=true" >> "$GITHUB_OUTPUT"
 
       - name: Create release
-        if: needs.bump.outputs.version-changed == 'true' && steps.commit.outputs.committed == 'true'
+        if: needs.prepare.outputs.version-changed == 'true' && steps.commit.outputs.committed == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "v${{ needs.bump.outputs.new-version }}" \
-            --title "pi v${{ needs.bump.outputs.new-version }}" \
-            --notes "Updates pi coding agent to v${{ needs.bump.outputs.new-version }}
+          gh release create "v${{ needs.prepare.outputs.new-version }}" \
+            --title "pi v${{ needs.prepare.outputs.new-version }}" \
+            --notes "Updates pi coding agent to v${{ needs.prepare.outputs.new-version }}
 
           \`\`\`bash
           nix flake update pi-nix  # in your dotfiles
