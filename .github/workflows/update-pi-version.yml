@@ -186,7 +186,7 @@ jobs:
         if: needs.prepare.outputs.version-changed == 'true'
         run: |
           echo "${{ needs.prepare.outputs.new-version }}" > VERSION
-          sed -i "s/pi--v[0-9]*\.[0-9]*\.[0-9]*/pi--v${{ needs.prepare.outputs.new-version }}/" README.md
+          sed -i "s/pi--v[0-9]*\.[0-9]*\.[0-9]*/pi--v${{ needs.prepare.outputs.new-version }}/g" README.md
 
       - name: Commit and push
         id: commit
