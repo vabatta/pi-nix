@@ -51,7 +51,7 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     dontFixup = true;
 
     outputHash = {
-      "aarch64-darwin" = "sha256-9tujjOUdThAroSvJUI79DZ5teVLQmwqW7RVNiqd4yw4=";
+      "aarch64-darwin" = "sha256-LA7J43OrhfctGx7LiK5Hhqubjm1usEmwbtSYDSLfmZo=";
       "x86_64-darwin" = lib.fakeHash;
       "aarch64-linux" = lib.fakeHash;
       "x86_64-linux" = "sha256-q0OixtpP/ZyENCUCjSbxXEWd9pCcbVQ92f8LpplJp4M=";

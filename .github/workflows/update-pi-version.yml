@@ -10,9 +10,11 @@ permissions:
   contents: write
 
 jobs:
-  update-pi:
+  bump:
     runs-on: ubuntu-latest
-
+    outputs:
+      has-changes: ${{ steps.update.outputs.has-changes }}
+      new-version: ${{ steps.update.outputs.new-version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -26,23 +28,14 @@ jobs:
       - name: Install nix-update
         run: nix profile install github:Mic92/nix-update
 
-      - name: Get current version
-        id: current
-        run: |
-          VERSION=$(grep -o 'version = "[^"]*"' package.nix | head -1 | sed 's/version = "\(.*\)"/\1/')
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Update pi
+      - name: Bump version + fix x86_64-linux hash
         id: update
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          # nix-update handles version + src hash; we handle node_modules hash
-          # manually because nix-update can't update per-platform hash maps
+          # nix-update handles version + src hash; per-platform node_modules
+          # hashes are handled manually because nix-update can't update
+          # per-platform hash maps.
           nix-update --flake pi
 
-          # Build to check if node_modules hash needs updating
           BUILD_LOG=$(nix build .#pi -L 2>&1) && BUILD_OK=true || BUILD_OK=false
 
           if [ "$BUILD_OK" = "false" ]; then
@@ -68,33 +61,155 @@ jobs:
             echo "new-version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Update VERSION file
+      - name: Upload package.nix
         if: steps.update.outputs.has-changes == 'true'
-        run: echo "${{ steps.update.outputs.new-version }}" > VERSION
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-nix
+          path: package.nix
+
+  bump-aarch64-darwin:
+    needs: bump
+    if: needs.bump.outputs.has-changes == 'true'
+    # macos-latest currently maps to Apple Silicon (aarch64-darwin).
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: package-nix
+      - uses: cachix/install-nix-action@v24
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      - name: Fix aarch64-darwin hash
+        run: |
+          BUILD_LOG=$(nix build .#pi -L 2>&1) && BUILD_OK=true || BUILD_OK=false
+          if [ "$BUILD_OK" = "false" ]; then
+            HASH=$(echo "$BUILD_LOG" | grep "got:" | awk '{print $NF}')
+            if [ -n "$HASH" ]; then
+              echo "Updating aarch64-darwin node_modules hash to $HASH"
+              # BSD sed (macOS) needs '' after -i
+              sed -i '' "s|\"aarch64-darwin\" = [^;]*|\"aarch64-darwin\" = \"$HASH\"|" package.nix
+              nix build .#pi -L
+            else
+              echo "Build failed but couldn't extract node_modules hash:"
+              echo "$BUILD_LOG"
+              exit 1
+            fi
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-nix
+          path: package.nix
+          overwrite: true
+
+  bump-x86_64-darwin:
+    needs: bump-aarch64-darwin
+    if: needs.bump.outputs.has-changes == 'true'
+    # macos-13 is the Intel Mac runner (x86_64-darwin).
+    runs-on: macos-13
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: package-nix
+      - uses: cachix/install-nix-action@v24
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      - name: Fix x86_64-darwin hash
+        run: |
+          BUILD_LOG=$(nix build .#pi -L 2>&1) && BUILD_OK=true || BUILD_OK=false
+          if [ "$BUILD_OK" = "false" ]; then
+            HASH=$(echo "$BUILD_LOG" | grep "got:" | awk '{print $NF}')
+            if [ -n "$HASH" ]; then
+              echo "Updating x86_64-darwin node_modules hash to $HASH"
+              sed -i '' "s|\"x86_64-darwin\" = [^;]*|\"x86_64-darwin\" = \"$HASH\"|" package.nix
+              nix build .#pi -L
+            else
+              echo "Build failed but couldn't extract node_modules hash:"
+              echo "$BUILD_LOG"
+              exit 1
+            fi
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-nix
+          path: package.nix
+          overwrite: true
+
+  bump-aarch64-linux:
+    needs: bump-x86_64-darwin
+    if: needs.bump.outputs.has-changes == 'true'
+    # GitHub's free ARM linux runner.
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: package-nix
+      - uses: cachix/install-nix-action@v24
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      - name: Fix aarch64-linux hash
+        run: |
+          BUILD_LOG=$(nix build .#pi -L 2>&1) && BUILD_OK=true || BUILD_OK=false
+          if [ "$BUILD_OK" = "false" ]; then
+            HASH=$(echo "$BUILD_LOG" | grep "got:" | awk '{print $NF}')
+            if [ -n "$HASH" ]; then
+              echo "Updating aarch64-linux node_modules hash to $HASH"
+              sed -i "s|\"aarch64-linux\" = [^;]*|\"aarch64-linux\" = \"$HASH\"|" package.nix
+              nix build .#pi -L
+            else
+              echo "Build failed but couldn't extract node_modules hash:"
+              echo "$BUILD_LOG"
+              exit 1
+            fi
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-nix
+          path: package.nix
+          overwrite: true
+
+  release:
+    needs: [bump, bump-aarch64-darwin, bump-x86_64-darwin, bump-aarch64-linux]
+    if: needs.bump.outputs.has-changes == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download finalized package.nix
+        uses: actions/download-artifact@v4
+        with:
+          name: package-nix
+
+      - name: Update VERSION file
+        run: echo "${{ needs.bump.outputs.new-version }}" > VERSION
 
       - name: Update README badge
-        if: steps.update.outputs.has-changes == 'true'
         run: |
-          sed -i "s/pi--v[0-9]*\.[0-9]*\.[0-9]*/pi--v${{ steps.update.outputs.new-version }}/" README.md
+          sed -i "s/pi--v[0-9]*\.[0-9]*\.[0-9]*/pi--v${{ needs.bump.outputs.new-version }}/" README.md
 
       - name: Commit, tag, and push
-        if: steps.update.outputs.has-changes == 'true'
         run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
           git add -A
-          git commit -m "update pi to v${{ steps.update.outputs.new-version }}"
-          git tag "v${{ steps.update.outputs.new-version }}"
+          git commit -m "update pi to v${{ needs.bump.outputs.new-version }}"
+          git tag "v${{ needs.bump.outputs.new-version }}"
           git push origin main --tags
 
       - name: Create release
-        if: steps.update.outputs.has-changes == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "v${{ steps.update.outputs.new-version }}" \
-            --title "pi v${{ steps.update.outputs.new-version }}" \
-            --notes "Updates pi coding agent to v${{ steps.update.outputs.new-version }}
-
-          Note: node_modules hash is for x86_64-linux only. Other platform hashes update on first local build.
+          gh release create "v${{ needs.bump.outputs.new-version }}" \
+            --title "pi v${{ needs.bump.outputs.new-version }}" \
+            --notes "Updates pi coding agent to v${{ needs.bump.outputs.new-version }}
 
           \`\`\`bash
           nix flake update pi-nix  # in your dotfiles
