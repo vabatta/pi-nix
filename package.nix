@@ -52,7 +52,7 @@ stdenvNoCC.mkDerivation (finalAttrs: {
 
     outputHash = {
       "aarch64-darwin" = "sha256-LA7J43OrhfctGx7LiK5Hhqubjm1usEmwbtSYDSLfmZo=";
-      "aarch64-linux" = lib.fakeHash;
+      "aarch64-linux" = "sha256-fYgBCqd6uH3tpoyF8BPP4riB6T5EFW/5WA8NS9jsz+w=";
       "x86_64-linux" = "sha256-q0OixtpP/ZyENCUCjSbxXEWd9pCcbVQ92f8LpplJp4M=";
     }.${stdenv.hostPlatform.system};
     outputHashAlgo = "sha256";
