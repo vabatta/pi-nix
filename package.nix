@@ -52,7 +52,6 @@ stdenvNoCC.mkDerivation (finalAttrs: {
 
     outputHash = {
       "aarch64-darwin" = "sha256-LA7J43OrhfctGx7LiK5Hhqubjm1usEmwbtSYDSLfmZo=";
-      "x86_64-darwin" = lib.fakeHash;
       "aarch64-linux" = lib.fakeHash;
       "x86_64-linux" = "sha256-q0OixtpP/ZyENCUCjSbxXEWd9pCcbVQ92f8LpplJp4M=";
     }.${stdenv.hostPlatform.system};
@@ -147,7 +146,7 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     description = "Minimal terminal coding agent — adapt pi to your workflows";
     homepage = "https://pi.dev";
     license = licenses.mit;
-    platforms = [ "aarch64-darwin" "x86_64-darwin" "aarch64-linux" "x86_64-linux" ];
+    platforms = [ "aarch64-darwin" "aarch64-linux" "x86_64-linux" ];
     mainProgram = "pi";
   };
 })
