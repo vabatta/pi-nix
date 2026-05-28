@@ -49,8 +49,15 @@ programs.pi = {
   packages = [
     "npm:pi-mcp-adapter"
     "npm:pi-subagents"
-    "npm:pi-web-access"
+    # Object form filters which resources to load from a package:
+    { source = "npm:pi-web-access"; skills = [ "fetch" ]; }
   ];
+
+  # Local (non-package) resources:
+  skills = [ "/etc/pi/skills" ];
+
+  defaultThinkingLevel = "medium";
+  transport = "auto";
 
   customProviders.ollama-local = {
     name = "Ollama (local)";
@@ -85,9 +92,15 @@ darwin-rebuild switch       # or home-manager switch
 | `theme` | null/str | `null` | Theme name (null = auto-detect) |
 | `auth` | attrsOf | `{}` | Auth credentials per provider |
 | `customProviders` | attrsOf | `{}` | Custom providers (models.json) |
-| `packages` | listOf str | `[]` | Extension packages |
+| `packages` | listOf (str \| { source; extensions?; skills?; prompts?; themes? }) | `[]` | npm/git package specifiers, optionally with resource filtering |
+| `extensions` | listOf str | `[]` | Local extension file paths or directories |
+| `skills` | listOf str | `[]` | Local skill file paths or directories |
+| `prompts` | listOf str | `[]` | Local prompt template paths or directories |
+| `themes` | listOf str | `[]` | Local theme file paths or directories |
+| `defaultThinkingLevel` | null/enum | `null` | `"off"`\|`"minimal"`\|`"low"`\|`"medium"`\|`"high"`\|`"xhigh"` |
+| `transport` | null/enum | `null` | `"auto"`\|`"sse"`\|`"websocket"`\|`"websocket-cached"` |
 | `mutableSettings` | bool | `true` | Seed-once vs overwrite |
-| `settings` | attrs | `{}` | Extra settings.json keys |
+| `settings` | attrs | `{}` | Extra settings.json keys (escape hatch for any field not typed above) |
 | `preLaunchHook` | lines | `""` | Pre-launch shell hook |
 
 ## Architecture
