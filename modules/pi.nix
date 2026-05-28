@@ -23,6 +23,42 @@ let
     };
   };
 
+  # pi's PackageSource: either a bare specifier string or an object that
+  # filters which resources to load from the package.
+  packageSourceType = lib.types.either lib.types.str (lib.types.submodule {
+    options = {
+      source = lib.mkOption {
+        type = lib.types.str;
+        description = "Package specifier (npm:... or git:...)";
+      };
+      extensions = lib.mkOption {
+        type = lib.types.nullOr (lib.types.listOf lib.types.str);
+        default = null;
+        description = "If set, only load these named extensions from the package";
+      };
+      skills = lib.mkOption {
+        type = lib.types.nullOr (lib.types.listOf lib.types.str);
+        default = null;
+        description = "If set, only load these named skills from the package";
+      };
+      prompts = lib.mkOption {
+        type = lib.types.nullOr (lib.types.listOf lib.types.str);
+        default = null;
+        description = "If set, only load these named prompts from the package";
+      };
+      themes = lib.mkOption {
+        type = lib.types.nullOr (lib.types.listOf lib.types.str);
+        default = null;
+        description = "If set, only load these named themes from the package";
+      };
+    };
+  });
+
+  # Strip null fields so pi sees absent rather than `null` for omitted filters.
+  packageSourceToJSON = src:
+    if builtins.isString src then src
+    else lib.filterAttrs (_: v: v != null) src;
+
   providerType = lib.types.submodule {
     options = {
       name = lib.mkOption { type = lib.types.str; description = "Display name"; };
@@ -44,10 +80,16 @@ let
   settingsBase = {
     defaultProvider = cfg.provider;
     defaultModel = cfg.model;
-    packages = cfg.packages;
-  } // lib.optionalAttrs (cfg.theme != null) {
-    theme = cfg.theme;
-  } // cfg.settings;
+    packages = map packageSourceToJSON cfg.packages;
+  }
+    // lib.optionalAttrs (cfg.theme != null) { theme = cfg.theme; }
+    // lib.optionalAttrs (cfg.extensions != []) { extensions = cfg.extensions; }
+    // lib.optionalAttrs (cfg.skills != []) { skills = cfg.skills; }
+    // lib.optionalAttrs (cfg.prompts != []) { prompts = cfg.prompts; }
+    // lib.optionalAttrs (cfg.themes != []) { themes = cfg.themes; }
+    // lib.optionalAttrs (cfg.defaultThinkingLevel != null) { defaultThinkingLevel = cfg.defaultThinkingLevel; }
+    // lib.optionalAttrs (cfg.transport != null) { transport = cfg.transport; }
+    // cfg.settings;
 
   settingsJson = builtins.toJSON settingsBase;
 
@@ -128,9 +170,56 @@ in
     };
 
     packages = lib.mkOption {
+      type = lib.types.listOf packageSourceType;
+      default = [];
+      example = lib.literalExpression ''
+        [
+          "npm:some-pi-pack"
+          { source = "git:https://github.com/user/repo"; skills = [ "review" ]; }
+        ]
+      '';
+      description = ''
+        Package sources (npm:... or git:...). Each entry is either a bare
+        specifier string, or an object with a `source` plus optional
+        `extensions` / `skills` / `prompts` / `themes` filters that restrict
+        which resources are loaded from that package.
+      '';
+    };
+
+    extensions = lib.mkOption {
       type = lib.types.listOf lib.types.str;
       default = [];
-      description = "Extension package specifiers (npm:... or git:...)";
+      description = "Local extension file paths or directories.";
+    };
+
+    skills = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [];
+      description = "Local skill file paths or directories.";
+    };
+
+    prompts = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [];
+      description = "Local prompt template paths or directories.";
+    };
+
+    themes = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [];
+      description = "Local theme file paths or directories.";
+    };
+
+    defaultThinkingLevel = lib.mkOption {
+      type = lib.types.nullOr (lib.types.enum [ "off" "minimal" "low" "medium" "high" "xhigh" ]);
+      default = null;
+      description = "Default thinking budget level. Null leaves pi's runtime default.";
+    };
+
+    transport = lib.mkOption {
+      type = lib.types.nullOr (lib.types.enum [ "auto" "sse" "websocket" "websocket-cached" ]);
+      default = null;
+      description = "HTTP streaming transport. Null leaves pi's runtime default (`auto`).";
     };
 
     mutableSettings = lib.mkOption {
