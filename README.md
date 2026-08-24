@@ -2,7 +2,7 @@
 
 Nix package and home-manager module for [pi.dev](https://pi.dev) coding agent.
 
-![pi--v0.84.2](https://img.shields.io/badge/pi--v0.84.2-blue)
+![pi--v0.84.3](https://img.shields.io/badge/pi--v0.84.3-blue)
 
 ## What this does
 
