@@ -3,6 +3,7 @@
 , stdenvNoCC
 , bun
 , fetchFromGitHub
+, fetchurl
 , makeBinaryWrapper
 , nodejs
 , nix-update-script
@@ -19,6 +20,15 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     repo = "pi";
     tag = "v${finalAttrs.version}";
     hash = "sha256-bLDEt1sKiS6ReQ6Uch0tOSLU8aykKl3UwN7WVkRE9Og=";
+  };
+
+  # Model catalog data is gitignored upstream and normally produced by
+  # `generate-models` with network access. The published @earendil-works/pi-ai
+  # npm tarball of the same version ships the identical data directory, so we
+  # vendor it from there to keep the build hermetic.
+  pi-ai-data = fetchurl {
+    url = "https://registry.npmjs.org/@earendil-works/pi-ai/-/pi-ai-${finalAttrs.version}.tgz";
+    hash = "sha256-NbRDLyfMJmX4a+67mvajmxJRlwiDwwRL2L5PToxzHKA=";
   };
 
   node_modules = stdenvNoCC.mkDerivation {
@@ -71,6 +81,10 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     cp -R ${finalAttrs.node_modules}/node_modules .
     chmod -R u+w node_modules
     patchShebangs node_modules
+
+    mkdir -p packages/ai/src/providers
+    tar xzf ${finalAttrs.pi-ai-data} -C packages/ai/src/providers --strip-components=3 \
+      package/dist/providers/data
     runHook postConfigure
   '';
 
@@ -79,19 +93,19 @@ stdenvNoCC.mkDerivation (finalAttrs: {
 
     export PATH="$PWD/node_modules/.bin:$PATH"
 
-    # Build workspaces in order: tui -> ai -> agent -> coding-agent
-    echo "Building tui..."
-    (cd packages/tui && tsgo -p tsconfig.build.json)
+    # Build workspaces in dependency order (mirrors the root build script):
+    # chord -> tui -> telemetry -> ai -> durable -> agent -> sqlite-node ->
+    # protocol -> client -> server -> coding-agent
+    for pkg in chord tui telemetry ai durable agent session-backends/sqlite-node protocol client server coding-agent; do
+      echo "Building $pkg..."
+      (cd "packages/$pkg" && tsgo -p tsconfig.build.json)
+    done
 
-    echo "Building ai..."
-    # Skip generate-models (needs network) — use pre-generated models.generated.ts from source
-    (cd packages/ai && tsgo -p tsconfig.build.json)
+    echo "Copying sqlite migrations..."
+    (cd packages/session-backends/sqlite-node && node scripts/copy-migrations.mjs)
 
-    echo "Building agent..."
-    (cd packages/agent && tsgo -p tsconfig.build.json)
-
-    echo "Building coding-agent..."
-    (cd packages/coding-agent && tsgo -p tsconfig.build.json)
+    echo "Copying model data into ai dist..."
+    (cd packages/ai && cp -r src/providers/data dist/providers/data)
 
     # Copy assets (themes, PNGs, HTML templates)
     echo "Copying assets..."
