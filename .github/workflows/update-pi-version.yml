@@ -4,12 +4,22 @@ on:
   schedule:
     # Every 6 hours
     - cron: "15 */6 * * *"
+  # Packaging changes (module updates, build fixes) shift node_modules
+  # hashes without an upstream version bump. Push runs force the platform
+  # hash refresh and tag v<version>-nix<N> when hashes actually changed.
+  push:
+    paths:
+      - package.nix
   workflow_dispatch:
     inputs:
       force:
         description: "Run platform hash refresh even when there is no version bump"
         type: boolean
         default: false
+      release-suffix:
+        description: "Tag suffix for force-run releases (default: auto nix<N>)"
+        type: string
+        default: ""
 
 permissions:
   contents: write
@@ -41,7 +51,12 @@ jobs:
           echo "current-version=$CURRENT" >> "$GITHUB_OUTPUT"
           echo "latest-version=$LATEST" >> "$GITHUB_OUTPUT"
 
-          if [ "$CURRENT" != "$LATEST" ] || [ "${{ inputs.force }}" = "true" ]; then
+          FORCE="${{ inputs.force }}"
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            FORCE=true
+          fi
+
+          if [ "$CURRENT" != "$LATEST" ] || [ "$FORCE" = "true" ]; then
             echo "should-run=true" >> "$GITHUB_OUTPUT"
           else
             echo "should-run=false" >> "$GITHUB_OUTPUT"
@@ -190,6 +205,8 @@ jobs:
 
       - name: Commit and push
         id: commit
+        env:
+          RELEASE_SUFFIX: ${{ inputs.release-suffix }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -202,23 +219,42 @@ jobs:
           fi
 
           if [ "${{ needs.prepare.outputs.version-changed }}" = "true" ]; then
-            git commit -m "update pi to v${{ needs.prepare.outputs.new-version }}"
-            git tag "v${{ needs.prepare.outputs.new-version }}"
-            git push origin main --tags
+            TAG="v${{ needs.prepare.outputs.new-version }}"
+            git commit -m "update pi to v${{ needs.prepare.outputs.new-version }} [skip ci]"
           else
-            git commit -m "refresh per-platform node_modules hashes"
-            git push origin main
+            VERSION=$(grep -o 'version = "[^"]*"' package.nix | head -1 | sed 's/version = "\(.*\)"/\1/')
+            if [ -n "$RELEASE_SUFFIX" ]; then
+              TAG="v${VERSION}-${RELEASE_SUFFIX}"
+            else
+              N=$(git tag -l "v${VERSION}-nix*" | sed 's/.*-nix//' | sort -n | tail -1)
+              N=$((N + 1))
+              TAG="v${VERSION}-nix${N}"
+            fi
+            git commit -m "refresh per-platform node_modules hashes (${TAG}) [skip ci]"
           fi
+          git tag "$TAG"
+          git push origin main --tags
           echo "committed=true" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
       - name: Create release
-        if: needs.prepare.outputs.version-changed == 'true' && steps.commit.outputs.committed == 'true'
+        if: steps.commit.outputs.committed == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.commit.outputs.tag }}
+          NEW_VERSION: ${{ needs.prepare.outputs.new-version }}
         run: |
-          gh release create "v${{ needs.prepare.outputs.new-version }}" \
-            --title "pi v${{ needs.prepare.outputs.new-version }}" \
-            --notes "Updates pi coding agent to v${{ needs.prepare.outputs.new-version }}
+          if [ "$TAG" = "v$NEW_VERSION" ]; then
+            TITLE="pi v$NEW_VERSION"
+            NOTES="Updates pi coding agent to v$NEW_VERSION"
+          else
+            TITLE="pi $TAG (packaging)"
+            NOTES="Packaging/hash refresh release — pin with this tag for a verified build"
+          fi
+
+          gh release create "$TAG" \
+            --title "$TITLE" \
+            --notes "$NOTES
 
           \`\`\`bash
           nix flake update pi-nix  # in your dotfiles

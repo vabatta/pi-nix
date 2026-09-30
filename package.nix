@@ -28,7 +28,7 @@ stdenvNoCC.mkDerivation (finalAttrs: {
   # vendor it from there to keep the build hermetic.
   pi-ai-data = fetchurl {
     url = "https://registry.npmjs.org/@earendil-works/pi-ai/-/pi-ai-${finalAttrs.version}.tgz";
-    hash = "sha256-NbRDLyfMJmX4a+67mvajmxJRlwiDwwRL2L5PToxzHKA=";
+    hash = "sha256-+fRGkhV9C/VnnEoXMEoxACgjHX2q6q6jtzJS9LeiZNM=";
   };
 
   node_modules = stdenvNoCC.mkDerivation {
@@ -55,13 +55,16 @@ stdenvNoCC.mkDerivation (finalAttrs: {
       runHook preInstall
       mkdir -p $out
       cp -R node_modules $out/
+      # Keep workspace packages: node_modules links resolve into them and
+      # nested dependency trees (e.g. packages/ai/node_modules/openai) live here.
+      cp -R packages $out/
       runHook postInstall
     '';
 
     dontFixup = true;
 
     outputHash = {
-      "aarch64-darwin" = "sha256-2qQjyAJlHoHjmQOicbK7Gj+lR0YkIOUIliqwh0avZg8=";
+      "aarch64-darwin" = "sha256-6vTUxjK0ko6mc4NmfkaoETF72355AMOIVVQCLjoqb1E=";
       "aarch64-linux" = "sha256-o51Q5HdM7PlFSxq0+4Xwscn/OEnGPUONJsGqrHiAfEk=";
       "x86_64-linux" = "sha256-Ya+PGcp5FndsUsTyywbK2ijaVbq8bjUh7hiDJjVJirA=";
     }.${stdenv.hostPlatform.system};
@@ -79,7 +82,8 @@ stdenvNoCC.mkDerivation (finalAttrs: {
   configurePhase = ''
     runHook preConfigure
     cp -R ${finalAttrs.node_modules}/node_modules .
-    chmod -R u+w node_modules
+    cp -R ${finalAttrs.node_modules}/packages .
+    chmod -R u+w node_modules packages
     patchShebangs node_modules
 
     mkdir -p packages/ai/src/providers
@@ -94,11 +98,11 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     export PATH="$PWD/node_modules/.bin:$PATH"
 
     # Build workspaces in dependency order (mirrors the root build script):
-    # chord -> tui -> telemetry -> ai -> durable -> agent -> sqlite-node ->
-    # protocol -> client -> server -> coding-agent
-    for pkg in chord tui telemetry ai durable agent session-backends/sqlite-node protocol client server coding-agent; do
+    # chord -> tui -> telemetry -> codemode -> mcp -> ai -> durable ->
+    # agent -> sqlite-node -> protocol -> client -> server -> coding-agent
+    for pkg in chord tui telemetry codemode mcp ai durable agent session-backends/sqlite-node protocol client server coding-agent; do
       echo "Building $pkg..."
-      (cd "packages/$pkg" && tsgo -p tsconfig.build.json)
+      (cd "packages/$pkg" && tsc -p tsconfig.build.json)
     done
 
     echo "Copying sqlite migrations..."
