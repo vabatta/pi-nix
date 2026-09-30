@@ -289,17 +289,19 @@ let
 
   settingsJson = builtins.toJSON (stripNulls settingsBase);
 
-  npmEnv = "NPM_CONFIG_PREFIX=$HOME/.pi/npm PATH=${cfg.nodejs}/bin:$PATH";
+  # Declarative settings file; the wrapper copies it into place so pi can
+  # still write back runtime state (auth refresh, /settings) without
+  # fighting the store.
+  settingsFile = pkgs.writeText "pi-settings.json" settingsJson;
 
-  # Settings script depends on mutableSettings
   settingsScript = if cfg.mutableSettings then ''
     if [[ ! -f "$settings_file" ]]; then
       mkdir -p "$(dirname "$settings_file")"
-      echo '${settingsJson}' > "$settings_file"
+      cp "${settingsFile}" "$settings_file"
     fi
   '' else ''
     mkdir -p "$(dirname "$settings_file")"
-    echo '${settingsJson}' > "$settings_file"
+    cp "${settingsFile}" "$settings_file"
   '';
 
   # Wrapper pre-launch hook
