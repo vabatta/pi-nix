@@ -84,11 +84,21 @@ jobs:
 
       - name: Bump version + src hash
         id: bump
+        env:
+          NEW_VERSION_PLACEHOLDER: ""
         run: |
           # nix-update can't update per-platform outputHash maps, so it only
           # touches version + src.hash here. node_modules hashes are handled
           # by the platform-hashes matrix.
           nix-update --flake pi
+
+          # nix-update doesn't know about our custom version-dependent fetchurl,
+          # so re-hash it for the (possibly new) version.
+          NEW_VERSION=$(grep -o 'version = "[^"]*"' package.nix | head -1 | sed 's/version = "\(.*\)"/\1/')
+          AI_HASH=$(nix store prefetch-file --hash-type sha256 --json \
+            "https://registry.npmjs.org/@earendil-works/pi-ai/-/pi-ai-${NEW_VERSION}.tgz" | jq -r .hash)
+          sed -i '/pi-ai-.*\.tgz";/{N; s|hash = "sha256-[^"]*"|hash = "'"${AI_HASH}"'"|;}' package.nix
+          grep -A1 'pi-ai-' package.nix | head -2
 
           if git diff --quiet; then
             VERSION_CHANGED=false
@@ -98,7 +108,6 @@ jobs:
             echo "Version bumped"
           fi
 
-          NEW_VERSION=$(grep -o 'version = "[^"]*"' package.nix | head -1 | sed 's/version = "\(.*\)"/\1/')
           echo "version-changed=$VERSION_CHANGED" >> "$GITHUB_OUTPUT"
           echo "new-version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
 
@@ -142,7 +151,11 @@ jobs:
             echo "Build succeeded with existing hash; no update needed."
             : > hash.txt
           else
-            HASH=$(echo "$BUILD_LOG" | grep "got:" | awk '{print $NF}')
+            # Only capture the node_modules FOD mismatch — a fetchurl failure
+            # elsewhere would otherwise be mistaken for the node_modules hash.
+            HASH=$(echo "$BUILD_LOG" | awk '
+              /fixed-output derivation .*-pi-node_modules-[0-9.]+\.drv/ { grab = 1 }
+              grab && /got:/ { sub(/.*got:[ ]*/, ""); print; exit }')
             if [ -z "$HASH" ]; then
               echo "Build failed for a non-hash reason:"
               echo "$BUILD_LOG"
@@ -172,6 +185,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+
+      - name: Sync with remote (avoid push races)
+        run: git pull --rebase origin main
 
       - name: Pull bumped package.nix
         uses: actions/download-artifact@v5
