@@ -13,13 +13,13 @@
 
 stdenvNoCC.mkDerivation (finalAttrs: {
   pname = "pi";
-  version = "1.0.3";
+  version = "1.0.4";
 
   src = fetchFromGitHub {
     owner = "earendil-works";
     repo = "pi";
     tag = "v${finalAttrs.version}";
-    hash = "sha256-2SfC8zEf6emG1sDG1J7hjjSBt+3hFIz1/TcwBLa/hRU=";
+    hash = "sha256-twDmQRr7vsrYzhS8o3TrlqdBzRFCbOOn/4hbCXD/u3Q=";
   };
 
   # Model catalog data is gitignored upstream and normally produced by
@@ -28,7 +28,7 @@ stdenvNoCC.mkDerivation (finalAttrs: {
   # vendor it from there to keep the build hermetic.
   pi-ai-data = fetchurl {
     url = "https://registry.npmjs.org/@earendil-works/pi-ai/-/pi-ai-${finalAttrs.version}.tgz";
-    hash = "sha256-3YmV+x3zyj4r0DMFO9LCi0DES7f1PCU1eMpoCCYR4O4=";
+    hash = "sha256-L9W/V8altbgtRWOxiiYnsU103Eqsv2mj3PkcCR5gOM8=";
   };
 
   node_modules = stdenvNoCC.mkDerivation {
@@ -64,9 +64,9 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     dontFixup = true;
 
     outputHash = {
-      "aarch64-darwin" = "sha256-VaD5/JxNDi4q76aPH+EWy4jNjwzFRMjtm3XxUQQeuqQ=";
-      "aarch64-linux" = "sha256-r4vNUxSrWkdV7ZcV8NnnI/PzVTLUYAr2jz/3XA2MNhI=";
-      "x86_64-linux" = "sha256-eYVsJz/fBTDnYUlkMlAytgt08DpgVm6A4O7pBnqWdoI=";
+      "aarch64-darwin" = "sha256-O5u6UZ7g6HnP4lwvtcwJibRZYhaBjR9DhQ+9kAxsuvk=";
+      "aarch64-linux" = "sha256-rDyj7phqbGDvAUqsPXhg6JOT+YhI+snLq9gEnnp1+xs=";
+      "x86_64-linux" = "sha256-YXSbL93x8SLHIYB8JZ4h8skDyujlUDYVoNIzenfZc34=";
     }.${stdenv.hostPlatform.system};
     outputHashAlgo = "sha256";
     outputHashMode = "recursive";
